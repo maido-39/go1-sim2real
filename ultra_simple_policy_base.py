@@ -6,8 +6,59 @@
 """
 
 import torch
+import torch.nn as nn
 import numpy as np
 from typing import Dict, List, Union
+
+
+class SimpleActorCritic(nn.Module):
+    """간단한 Actor-Critic 네트워크 (MLP만)"""
+    
+    def __init__(self, num_actor_obs, num_critic_obs, num_actions, actor_hidden_dims=None, critic_hidden_dims=None, activation="elu"):
+        super().__init__()
+        
+        if actor_hidden_dims is None:
+            actor_hidden_dims = [512, 256, 128]
+        if critic_hidden_dims is None:
+            critic_hidden_dims = [512, 256, 128]
+        
+        # Activation 함수
+        if activation == "elu":
+            act_fn = nn.ELU()
+        elif activation == "relu":
+            act_fn = nn.ReLU()
+        elif activation == "tanh":
+            act_fn = nn.Tanh()
+        else:
+            act_fn = nn.ELU()
+        
+        # Actor 네트워크
+        actor_layers = []
+        actor_layers.append(nn.Linear(num_actor_obs, actor_hidden_dims[0]))
+        actor_layers.append(act_fn)
+        for i in range(len(actor_hidden_dims) - 1):
+            actor_layers.append(nn.Linear(actor_hidden_dims[i], actor_hidden_dims[i + 1]))
+            actor_layers.append(act_fn)
+        actor_layers.append(nn.Linear(actor_hidden_dims[-1], num_actions))
+        self.actor = nn.Sequential(*actor_layers)
+        
+        # Critic 네트워크
+        critic_layers = []
+        critic_layers.append(nn.Linear(num_critic_obs, critic_hidden_dims[0]))
+        critic_layers.append(act_fn)
+        for i in range(len(critic_hidden_dims) - 1):
+            critic_layers.append(nn.Linear(critic_hidden_dims[i], critic_hidden_dims[i + 1]))
+            critic_layers.append(act_fn)
+        critic_layers.append(nn.Linear(critic_hidden_dims[-1], 1))
+        self.critic = nn.Sequential(*critic_layers)
+    
+    def forward(self, observations):
+        """Forward pass"""
+        return self.actor(observations)
+    
+    def act_inference(self, observations):
+        """Deterministic action for inference"""
+        return self.actor(observations)
 
 
 def load_go1_base_policy(checkpoint_path: str, device: str = "cpu"):
@@ -23,17 +74,8 @@ def load_go1_base_policy(checkpoint_path: str, device: str = "cpu"):
     proprio_dim = actor_input_size
     print(f"actor_input_size: {actor_input_size}, proprio_dim: {proprio_dim}")
     
-    # 모델 생성 - 일반 ActorCritic (MLP만)
-    import sys
-    import os
-    # 프로젝트 루트 경로 추가
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
-    
-    from rsl_rl.rsl_rl.modules.actor_critic import ActorCritic
-    
-    model = ActorCritic(
+    # 모델 생성 - 간단한 ActorCritic (MLP만)
+    model = SimpleActorCritic(
         num_actor_obs=proprio_dim,
         num_critic_obs=proprio_dim,
         num_actions=12,
