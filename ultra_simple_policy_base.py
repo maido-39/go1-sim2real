@@ -68,16 +68,17 @@ def load_go1_base_policy(checkpoint_path: str, device: str = "cpu"):
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model_state = checkpoint["model_state_dict"]
     
-    # Actor 네트워크의 첫 번째 레이어 가중치로 input size 파악
+    # Actor와 Critic의 input size를 각각 파악
     # actor.0.weight shape: (hidden, input_dim)
     actor_input_size = model_state["actor.0.weight"].shape[1]
-    proprio_dim = actor_input_size
-    print(f"actor_input_size: {actor_input_size}, proprio_dim: {proprio_dim}")
+    critic_input_size = model_state["critic.0.weight"].shape[1]
+    print(f"actor_input_size: {actor_input_size}")
+    print(f"critic_input_size: {critic_input_size}")
     
     # 모델 생성 - 간단한 ActorCritic (MLP만)
     model = SimpleActorCritic(
-        num_actor_obs=proprio_dim,
-        num_critic_obs=proprio_dim,
+        num_actor_obs=actor_input_size,
+        num_critic_obs=critic_input_size,
         num_actions=12,
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
@@ -86,7 +87,10 @@ def load_go1_base_policy(checkpoint_path: str, device: str = "cpu"):
     
     model.to(device)
     model.eval()
-    model.load_state_dict(model_state)
+    
+    # std 키를 제외하고 state_dict 로드
+    filtered_state_dict = {k: v for k, v in model_state.items() if k != 'std'}
+    model.load_state_dict(filtered_state_dict, strict=False)
     print("모델 로딩 완료!")
     
     def predict_action(observation: Dict[str, Union[List[float], np.ndarray]]) -> np.ndarray:
@@ -101,11 +105,12 @@ def load_go1_base_policy(checkpoint_path: str, device: str = "cpu"):
         proprio_obs.extend(observation['joint_vel'])
         proprio_obs.extend(observation['actions'])
         
-        # 차원 맞추기
-        if len(proprio_obs) < proprio_dim:
-            proprio_obs.extend([0.0] * (proprio_dim - len(proprio_obs)))
-        elif len(proprio_obs) > proprio_dim:
-            proprio_obs = proprio_obs[:proprio_dim]
+        # 차원 검증
+        if len(proprio_obs) != actor_input_size:
+            raise ValueError(
+                f"Observation dimension mismatch: expected {actor_input_size}, got {len(proprio_obs)}. "
+                f"Expected: base_ang_vel(3) + base_rpy(3) + velocity_commands(3) + joint_pos(12) + joint_vel(12) + actions(12) = 45"
+            )
         
         # 최종 observation 텐서
         obs_tensor = torch.tensor(proprio_obs, dtype=torch.float32).unsqueeze(0).to(device)
@@ -114,7 +119,8 @@ def load_go1_base_policy(checkpoint_path: str, device: str = "cpu"):
         with torch.no_grad():
             action = model.act_inference(obs_tensor)
         
-        return action.cpu().numpy()
+        # 배치 차원 제거하고 numpy로 변환
+        return action.cpu().numpy().flatten()
     
     return predict_action
 
@@ -122,7 +128,7 @@ def load_go1_base_policy(checkpoint_path: str, device: str = "cpu"):
 # 사용 예시
 if __name__ == "__main__":
     # 정책 로드
-    predict_action = load_go1_base_policy("./model_14999.pt", device="cpu")
+    predict_action = load_go1_base_policy("./model_6000.pt", device="cpu")
     
     # 테스트 observation
     observation = {
